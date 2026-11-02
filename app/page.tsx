@@ -173,10 +173,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !sessionUser) return;
+    const client = supabase;
+    if (!client || !sessionUser) return;
     void loadCloudData(sessionUser.id);
-    const channel = supabase.channel(`fixdorm-${sessionUser.id}`).on("postgres_changes", { event: "*", schema: "public", table: "reports" }, () => { void loadCloudData(sessionUser.id); }).on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${sessionUser.id}` }, () => { void loadCloudData(sessionUser.id); }).subscribe();
-    return () => { void supabase.removeChannel(channel); };
+    const channel = client.channel(`fixdorm-${sessionUser.id}`).on("postgres_changes", { event: "*", schema: "public", table: "reports" }, () => { void loadCloudData(sessionUser.id); }).on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${sessionUser.id}` }, () => { void loadCloudData(sessionUser.id); }).subscribe();
+    return () => { void client.removeChannel(channel); };
   }, [sessionUser, loadCloudData]);
 
   useEffect(() => { if (toast) { const timer = setTimeout(() => setToast(""), 3200); return () => clearTimeout(timer); } }, [toast]);
