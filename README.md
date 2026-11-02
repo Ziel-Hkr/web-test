@@ -4,13 +4,14 @@ FixDorm is a responsive dormitory maintenance MVP. Residents can file repair rep
 
 ## Try the preview
 
-Run the app without environment variables to explore the role-specific demo dashboards. Demo reports are stored in the current browser only; this mode is for previewing the workflow and is not shared between users.
+Run the app without environment variables to explore the role-specific demo dashboards. The entry page separates students, helpdesk staff, and technicians. Demo reports and notifications are stored in the current browser only; this mode is for previewing the workflow and is not shared between users.
 
-The account menu lets you switch between the Helpdesk, Resident, and Technician sample views.
+The preview offers sample views for Mahasiswa, Admin Helpdesk, and Teknisi.
 
 ## Connect Supabase
 
 1. Create a Supabase project and run [`supabase/schema.sql`](supabase/schema.sql) once in its SQL Editor.
+   If you already ran an earlier FixDorm schema, run [`supabase/migrations/202611020001_report_dispatch_notifications.sql`](supabase/migrations/202611020001_report_dispatch_notifications.sql) instead.
 2. Copy `.env.example` to `.env.local` and set the project URL and anon/publishable key:
 
    ```env
@@ -21,7 +22,7 @@ The account menu lets you switch between the Helpdesk, Resident, and Technician 
 3. Add the same two public variables to the Vercel project and redeploy. The app uses Supabase Auth, Postgres with Row Level Security, the private `fixdorm-media` Storage bucket, and Realtime updates.
 4. Residents can register from the sign-in screen. After a staff member registers, promote the profile using the provisioning SQL comments at the bottom of `supabase/schema.sql`. For a technician, also create their `technicians` row and add one or more skill rows.
 
-The SQL creates a private media bucket (8 MB image limit), report status history, notifications, job assignments, reviews, and role-based policies. Do not put a service-role key in a `NEXT_PUBLIC_` variable.
+The SQL creates a private media bucket (8 MB image limit), report status history, notifications, job assignments, reviews, and role-based policies. New student reports notify the helpdesk; only helpdesk-approved reports can be dispatched to an available technician whose skills match; technicians can accept or decline; and report progress notifies the student and helpdesk. Do not put a service-role key in a `NEXT_PUBLIC_` variable.
 
 ## Run locally
 
@@ -36,9 +37,9 @@ Open `http://localhost:3000`. To check a production build locally, run `npm run 
 
 ## Roles and workflow
 
-- **Resident:** creates a report, adds a photo and location, follows status updates, and reviews a completed repair.
-- **Helpdesk:** verifies reports, sets priority, assigns a technician whose skills match the category, and updates report status.
+- **Mahasiswa:** creates a report, adds a photo and location, follows status updates, and reviews a completed repair.
+- **Admin Helpdesk:** receives new-report notifications, approves reports, sets priority, and assigns an available technician whose skills match the category.
 - **Technician:** sees offers assigned to their account, accepts or declines, updates the repair status, and can attach a completion photo.
 
-Available statuses are: Menunggu verifikasi, Menunggu teknisi, Menunggu konfirmasi teknisi, Teknisi menerima pekerjaan, Sedang diperbaiki, Menunggu suku cadang, and Selesai.
+Available statuses are: Menunggu helpdesk, Siap ditugaskan, Menunggu respons teknisi, Teknisi menerima, Sedang diperbaiki, Menunggu suku cadang, and Selesai.
 
