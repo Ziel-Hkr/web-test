@@ -49,6 +49,11 @@ const demoTechs: Tech[] = [
   { id: "tech-3", name: "Siti Rahma", title: "Teknisi umum", skills: ["Furniture", "Bangunan & fasilitas umum", "Lainnya"], available: false, initials: "SR", rating: 4.9, jobs: 21 },
   { id: "tech-4", name: "Andi Pratama", title: "Teknisi elektronik", skills: ["Peralatan elektronik", "Kelistrikan"], available: true, initials: "AP", rating: 4.7, jobs: 19 },
 ];
+const loginRoles: { role: Role; title: string; description: string; icon: LucideIcon }[] = [
+  { role: "resident", title: "Mahasiswa", description: "Buat laporan kerusakan, pantau status, dan terima kabar perbaikan.", icon: Users },
+  { role: "admin", title: "Admin Helpdesk", description: "Verifikasi laporan, atur prioritas, dan tugaskan teknisi.", icon: ClipboardList },
+  { role: "technician", title: "Teknisi", description: "Lihat tugas yang diberikan, perbarui progres, dan kirim hasil perbaikan.", icon: Wrench },
+];
 const initialReports: Report[] = [
   { id: "r-101", code: "FD-2408", item: "Lampu koridor mati", category: "Kelistrikan", building: "Gedung Asoka", room: "Lt. 3 · Koridor timur", description: "Dua lampu di depan kamar 312 mati sejak tadi malam.", status: "in_progress", priority: "high", resident: "Alya Pratama", residentId: "resident-1", technician: "Bima Saputra", technicianId: "tech-1", createdAt: "2026-11-02T02:30:00.000Z", photoUrl: "", afterPhotoUrl: "", timeline: [{ status: "pending_verification", note: "Laporan dibuat oleh penghuni.", at: "2026-11-02T02:30:00.000Z", actor: "Alya Pratama" }, { status: "awaiting_technician", note: "Laporan diverifikasi oleh helpdesk.", at: "2026-11-02T03:00:00.000Z", actor: "Nanda Putri" }, { status: "in_progress", note: "Bima mulai memeriksa instalasi lampu.", at: "2026-11-02T04:00:00.000Z", actor: "Bima Saputra" }] },
   { id: "r-102", code: "FD-2407", item: "Keran wastafel bocor", category: "Perpipaan & air", building: "Gedung Cendana", room: "Lt. 2 · Kamar 208", description: "Air terus menetes meskipun keran sudah ditutup.", status: "awaiting_confirmation", priority: "normal", resident: "Dinda Lestari", residentId: "resident-2", technician: "Rizky Maulana", technicianId: "tech-2", createdAt: "2026-11-02T01:05:00.000Z", photoUrl: "", afterPhotoUrl: "", timeline: [{ status: "pending_verification", note: "Laporan dibuat oleh penghuni.", at: "2026-11-02T01:05:00.000Z", actor: "Dinda Lestari" }, { status: "awaiting_confirmation", note: "Helpdesk menawarkan pekerjaan kepada Rizky.", at: "2026-11-02T01:30:00.000Z", actor: "Nanda Putri" }] },
@@ -60,6 +65,7 @@ const initialReports: Report[] = [
 function StatusPill({ status }: { status: Status }) { return <span className={`status-pill ${statusTone[status]}`}><i />{statusLabels[status]}</span>; }
 function PriorityPill({ priority }: { priority: Priority }) { return <span className={`priority-pill ${priority}`}><i />{priorityLabels[priority]}</span>; }
 function initials(name: string) { return name.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase(); }
+function roleName(role: Role) { return loginRoles.find((item) => item.role === role)?.title ?? "Pengguna"; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)); }
 function formatShort(value: string) { return new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short" }).format(new Date(value)); }
 function initialsColor(name: string) { const colors = ["avatar-coral", "avatar-blue", "avatar-lilac", "avatar-green", "avatar-gold"]; return colors[name.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % colors.length]; }
@@ -75,6 +81,9 @@ function Modal({ title, subtitle, onClose, children, wide = false }: { title: st
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("overview");
   const [role, setRole] = useState<Role>("admin");
+  const [selectedLoginRole, setSelectedLoginRole] = useState<Role>("resident");
+  const [demoEntryRole, setDemoEntryRole] = useState<Role | null>(null);
+  const [roleCheckPending, setRoleCheckPending] = useState(false);
   const [sessionUser, setSessionUser] = useState<User | null>(null);
   const [profileName, setProfileName] = useState("Nanda Putri");
   const [authReady, setAuthReady] = useState(!hasSupabaseConfig);
@@ -107,7 +116,7 @@ export default function Home() {
 
   const demo = !hasSupabaseConfig;
   const currentName = demo ? (role === "admin" ? "Nanda Putri" : role === "resident" ? "Alya Pratama" : "Bima Saputra") : profileName;
-  const roleTitle = role === "admin" ? "Helpdesk" : role === "resident" ? "Penghuni" : "Teknisi";
+  const roleTitle = role === "admin" ? "Admin Helpdesk" : role === "resident" ? "Mahasiswa" : "Teknisi";
   const selectedReport = reports.find((report) => report.id === selectedId) ?? null;
 
   const loadCloudData = useCallback(async (userId: string) => {
@@ -280,21 +289,36 @@ export default function Home() {
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!supabase) { setShowAuth(false); return; }
     setAuthBusy(true);
+    setRoleCheckPending(true);
     try {
       if (authMode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password }); if (error) throw error;
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("Sesi masuk tidak ditemukan. Silakan coba lagi.");
+        const { data: account, error: profileError } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+        if (profileError) throw profileError;
+        if (!account || account.role !== selectedLoginRole) {
+          await supabase.auth.signOut();
+          setSessionUser(null);
+          const wanted = loginRoles.find((item) => item.role === selectedLoginRole)?.title ?? "akun yang dipilih";
+          const actual = loginRoles.find((item) => item.role === account?.role)?.title ?? "belum terdaftar";
+          throw new Error(`Akun ini terdaftar sebagai ${actual}. Silakan pilih jalur ${actual}, bukan ${wanted}.`);
+        }
+        setRole(account.role as Role);
         setShowAuth(false); setToast("Berhasil masuk ke FixDorm.");
       } else {
+        if (selectedLoginRole !== "resident") throw new Error("Pendaftaran mandiri hanya tersedia untuk mahasiswa.");
         const { error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { full_name: fullName.trim() } } }); if (error) throw error;
         setShowAuth(false); setToast("Akun dibuat. Cek email untuk verifikasi jika diminta.");
       }
     } catch (error) { setToast(error instanceof Error ? error.message : "Autentikasi gagal."); }
-    finally { setAuthBusy(false); }
+    finally { setAuthBusy(false); setRoleCheckPending(false); }
   }
 
   async function logout() {
     if (supabase) await supabase.auth.signOut();
-    setSessionUser(null); if (demo) setShowAuth(true);
+    setSessionUser(null);
+    if (demo) { setDemoEntryRole(null); setRole("resident"); setScreen("overview"); setShowRoleMenu(false); }
   }
 
   async function submitReview(event: FormEvent<HTMLFormElement>) {
@@ -324,7 +348,35 @@ export default function Home() {
   function changeScreen(next: Screen) { setScreen(next); setMobileNav(false); setFilter("all"); }
 
   if (!authReady) return <div className="loading-screen"><div className="brand-mark"><Wrench size={19} /></div><span>Menyiapkan FixDorm...</span></div>;
-  if (hasSupabaseConfig && !sessionUser) return <main className="login-page"><div className="login-brand"><div className="brand-mark"><Wrench size={20} /></div><span>fix<span>dorm</span></span></div><div className="login-content"><span className="eyebrow"><span className="live-dot" /> RUANG ASRAMA, TERAWAT</span><h1>Perbaikan yang terasa <em>lebih mudah.</em></h1><p>Laporkan fasilitas rusak dan pantau perbaikannya, dari mana saja.</p><button className="button button-primary login-button" onClick={() => { setAuthMode("signin"); setShowAuth(true); }}><LogIn size={17} /> Masuk ke FixDorm <ArrowRight size={17} /></button><div className="login-foot"><ShieldCheck size={15} /> Akses aman khusus penghuni dan tim asrama</div></div><div className="login-illustration"><div className="illustration-card"><div className="illustration-card-head"><span><span className="live-dot" /> Semua berjalan lancar</span><span>Hari ini</span></div><div className="mini-stats"><div><span>Laporan aktif</span><strong>08</strong></div><div><span>Selesai bulan ini</span><strong>94<span className="mini-percent"> +12%</span></strong></div></div><div className="mini-chart"><i style={{ height: "34%" }} /><i style={{ height: "52%" }} /><i style={{ height: "45%" }} /><i style={{ height: "70%" }} /><i style={{ height: "57%" }} /><i style={{ height: "83%" }} /><i style={{ height: "67%" }} /><i style={{ height: "93%" }} /></div><div className="illustration-task"><span className="task-icon"><Zap size={17} /></span><span><strong>Lampu koridor Gedung Asoka</strong><small>Teknisi sedang memperbaiki</small></span><span className="status-pill red"><i />Dalam proses</span></div></div></div><div className="login-watermark">Fasilitas baik, hari lebih nyaman.</div>{showAuth && <AuthModal authMode={authMode} setAuthMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} busy={authBusy} onClose={() => setShowAuth(false)} onSubmit={handleAuth} />}</main>;
+  if ((hasSupabaseConfig && (!sessionUser || roleCheckPending)) || (demo && !demoEntryRole)) return <main className="login-page">
+    <div className="login-brand"><div className="brand-mark"><Wrench size={20} /></div><span>fix<span>dorm</span></span></div>
+    <div className="login-content">
+      <span className="eyebrow"><span className="live-dot" /> RUANG ASRAMA, TERAWAT</span>
+      <h1>Perbaikan yang terasa <em>lebih mudah.</em></h1>
+      <p>Pilih akses sesuai peran Anda. Setiap orang mendapat ruang kerja dan informasi yang relevan.</p>
+      {demo && <div className="login-preview-note"><Sparkles size={15} /> Pratinjau: pilih peran untuk mencoba dashboard.</div>}
+      <section className="login-role-list" aria-label="Pilih jenis akun FixDorm">
+        {loginRoles.map((item) => {
+          const Icon = item.icon;
+          return <article className="login-role-card" key={item.role}>
+            <span className={`login-role-icon login-role-${item.role}`}><Icon size={20} /></span>
+            <div className="login-role-copy"><strong>{item.title}</strong><p>{item.description}</p></div>
+            <button className="button button-primary login-role-button" onClick={() => {
+              if (demo) { setRole(item.role); setScreen("overview"); setDemoEntryRole(item.role); }
+              else { setSelectedLoginRole(item.role); setAuthMode("signin"); setShowAuth(true); }
+            }}>{demo ? "Coba" : "Masuk"}<ArrowRight size={15} /></button>
+            {item.role === "resident" && !demo && <button className="login-signup-link" onClick={() => { setSelectedLoginRole("resident"); setAuthMode("signup"); setShowAuth(true); }}>Belum punya akun mahasiswa? Daftar</button>}
+            {item.role !== "resident" && <small className="login-staff-note">Akun dibuat oleh pengelola asrama</small>}
+          </article>;
+        })}
+      </section>
+      <div className="login-foot"><ShieldCheck size={15} /> Mahasiswa hanya melihat laporan miliknya; akses staf disesuaikan dengan tugas.</div>
+    </div>
+    <div className="login-illustration"><div className="illustration-card"><div className="illustration-card-head"><span><span className="live-dot" /> Semua berjalan lancar</span><span>Hari ini</span></div><div className="mini-stats"><div><span>Laporan aktif</span><strong>08</strong></div><div><span>Selesai bulan ini</span><strong>94<span className="mini-percent"> +12%</span></strong></div></div><div className="mini-chart"><i style={{ height: "34%" }} /><i style={{ height: "52%" }} /><i style={{ height: "45%" }} /><i style={{ height: "70%" }} /><i style={{ height: "57%" }} /><i style={{ height: "83%" }} /><i style={{ height: "67%" }} /><i style={{ height: "93%" }} /></div><div className="illustration-task"><span className="task-icon"><Zap size={17} /></span><span><strong>Lampu koridor Gedung Asoka</strong><small>Teknisi sedang memperbaiki</small></span><span className="status-pill red"><i />Dalam proses</span></div></div></div>
+    <div className="login-watermark">Fasilitas baik, hari lebih nyaman.</div>
+    {showAuth && <AuthModal role={selectedLoginRole} authMode={authMode} setAuthMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} busy={authBusy} onClose={() => setShowAuth(false)} onSubmit={handleAuth} />}
+    {toast && <div className="toast"><span className="toast-check"><Check size={15} /></span>{toast}<button aria-label="Tutup" onClick={() => setToast("")}><X size={15} /></button></div>}
+  </main>;
 
   const roleNav: { screen: Screen; label: string; icon: LucideIcon }[] = role === "resident"
     ? [{ screen: "overview", label: "Ringkasan", icon: LayoutDashboard }, { screen: "reports", label: "Laporan saya", icon: ClipboardList }]
@@ -345,7 +397,7 @@ export default function Home() {
     {mobileNav && <button className="nav-scrim" aria-label="Tutup menu" onClick={() => setMobileNav(false)} />}
     <div className="main-column">
       <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" aria-label="Buka menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb">FixDorm <ChevronRight size={14} /> <strong>{roleNav.find((item) => item.screen === screen)?.label ?? "Pengaturan"}</strong></div></div><div className="topbar-right"><label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari laporan..." /><kbd>⌘ K</kbd></label><div className="topbar-divider" /><button className={`icon-button notification-button ${showNotices ? "icon-selected" : ""}`} aria-label="Notifikasi" onClick={() => { setShowNotices((open) => !open); setShowRoleMenu(false); }}><Bell size={18} />{unread > 0 && <i className="notification-dot" />}</button><button className="header-user" onClick={() => { setShowRoleMenu((open) => !open); setShowNotices(false); }}><span className={`avatar avatar-small ${initialsColor(currentName)}`}>{initials(currentName)}</span><ChevronDown size={14} /></button></div></header>
-      {showRoleMenu && <div className="floating-menu role-menu"><div className="menu-heading">AKUN SAYA</div><div className="menu-current"><span className={`avatar ${initialsColor(currentName)}`}>{initials(currentName)}</span><div><strong>{currentName}</strong><small>{demo ? "Mode demo · Data di perangkat" : sessionUser?.email}</small></div></div>{demo && <><div className="menu-heading role-switch-heading">LIHAT SEBAGAI</div>{([ ["admin", "Helpdesk", "Nanda Putri"], ["resident", "Penghuni", "Alya Pratama"], ["technician", "Teknisi", "Bima Saputra"] ] as const).map(([value, label]) => <button key={value} className={`role-choice ${role === value ? "role-choice-active" : ""}`} onClick={() => { setRole(value); setScreen("overview"); setShowRoleMenu(false); }}><span>{label}</span>{role === value && <Check size={15} />}</button>)}</>}{!demo && <button className="role-choice" onClick={() => void logout()}><LogOut size={15} /> Keluar</button>}<button className="connect-link" onClick={() => { setShowRoleMenu(false); changeScreen("settings"); }}>{demo ? <><Settings2 size={15} /> Pengaturan koneksi</> : <><Settings2 size={15} /> Pengaturan akun</>}</button></div>}
+      {showRoleMenu && <div className="floating-menu role-menu"><div className="menu-heading">AKUN SAYA</div><div className="menu-current"><span className={`avatar ${initialsColor(currentName)}`}>{initials(currentName)}</span><div><strong>{currentName}</strong><small>{demo ? "Mode demo · Data di perangkat" : sessionUser?.email}</small></div></div>{demo && <><div className="menu-heading role-switch-heading">LIHAT SEBAGAI</div>{([ ["admin", "Admin Helpdesk", "Nanda Putri"], ["resident", "Mahasiswa", "Alya Pratama"], ["technician", "Teknisi", "Bima Saputra"] ] as const).map(([value, label]) => <button key={value} className={`role-choice ${role === value ? "role-choice-active" : ""}`} onClick={() => { setRole(value); setScreen("overview"); setShowRoleMenu(false); }}><span>{label}</span>{role === value && <Check size={15} />}</button>)}<button className="role-choice" onClick={() => void logout()}><LogOut size={15} /> Keluar dari pratinjau</button></>}{!demo && <button className="role-choice" onClick={() => void logout()}><LogOut size={15} /> Keluar</button>}<button className="connect-link" onClick={() => { setShowRoleMenu(false); changeScreen("settings"); }}>{demo ? <><Settings2 size={15} /> Pengaturan koneksi</> : <><Settings2 size={15} /> Pengaturan akun</>}</button></div>}
       {showNotices && <div className="floating-menu notices-menu"><div className="notices-title"><div><strong>Notifikasi</strong><small>{unread ? `${unread} belum dibaca` : "Semua sudah terbaca"}</small></div><button className="text-button" onClick={() => { const next = notices.map((notice) => ({ ...notice, read: true })); setNotices(next); if (demo) localStorage.setItem("fixdorm:notices", JSON.stringify(next)); else if (supabase && sessionUser) void supabase.from("notifications").update({ is_read: true }).eq("user_id", sessionUser.id); }}>Tandai dibaca</button></div>{notices.length ? notices.slice(0, 5).map((notice) => <div className={`notice-item ${notice.read ? "notice-read" : ""}`} key={notice.id}><span className="notice-icon"><Bell size={15} /></span><div><p>{notice.text}</p><small>{formatDate(notice.at)}</small></div>{!notice.read && <i />}</div>) : <div className="notice-empty">Belum ada notifikasi</div>}</div>}
 
       <main className="page-content">
@@ -372,7 +424,7 @@ export default function Home() {
           {role === "technician" && selectedReport.technicianId === (demo ? "tech-1" : sessionUser?.id) && ["accepted", "in_progress", "waiting_parts"].includes(selectedReport.status) && <div className="side-card note-card"><span className="side-label">ESTIMASI & CATATAN</span><label className="side-field"><span>Estimasi selesai (jam)</span><input type="number" min="1" max="168" step="1" value={estimateDraft} onChange={(event) => setEstimateDraft(event.target.value)} placeholder="Contoh: 4" /></label><button className="button button-light button-small" disabled={busyReport || !estimateDraft || Number(estimateDraft) < 1 || Number(estimateDraft) > 168} onClick={() => void updateReport(selectedReport.id, { estimatedHours: Number(estimateDraft) }, `Estimasi pengerjaan: ${estimateDraft} jam.`)}>Simpan estimasi</button><label className="side-field"><span>Catatan perbaikan</span><textarea rows={3} maxLength={500} value={workNote} onChange={(event) => setWorkNote(event.target.value)} placeholder="Pemeriksaan atau pekerjaan yang dilakukan..." /></label><button className="button button-primary button-small" disabled={busyReport || !workNote.trim()} onClick={() => { const note = workNote.trim(); void updateReport(selectedReport.id, { status: selectedReport.status }, `Catatan teknisi: ${note}`).then(() => setWorkNote("")); }}>Tambahkan catatan</button></div>}
           <div className="detail-help"><ShieldCheck size={16} /><span>Setiap perubahan tercatat dalam riwayat laporan.</span></div></aside></div></Modal>}
 
-    {showAuth && <AuthModal authMode={authMode} setAuthMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} busy={authBusy} onClose={() => setShowAuth(false)} onSubmit={handleAuth} />}
+    {showAuth && <AuthModal role={role} authMode={authMode} setAuthMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} busy={authBusy} onClose={() => setShowAuth(false)} onSubmit={handleAuth} />}
     {toast && <div className="toast"><span className="toast-check"><Check size={15} /></span>{toast}<button aria-label="Tutup" onClick={() => setToast("")}><X size={15} /></button></div>}
   </div>;
 }
@@ -436,7 +488,18 @@ function SettingsPage({ demo, name, email, onSignOut }: { demo: boolean; name: s
   return <><div className="page-heading-row"><div><span className="eyebrow">PREFERENSI</span><h1>Pengaturan</h1><p>Kelola koneksi dan informasi akun FixDorm.</p></div></div><div className="settings-layout"><section className="panel settings-card"><div className="settings-title"><span className="settings-icon"><ShieldCheck size={19} /></span><div><h2>Koneksi aplikasi</h2><p>Status database dan autentikasi</p></div></div><div className={`connection-status ${demo ? "connection-demo" : "connection-live"}`}><i />{demo ? "Mode pratinjau aktif" : "Terhubung ke Supabase"}</div><p className="settings-copy">{demo ? "Data saat ini disimpan di browser ini agar Anda dapat mencoba alur FixDorm. Hubungkan project Supabase untuk mengaktifkan akun, penyimpanan online, foto, dan pembaruan realtime." : "Akun Anda menggunakan autentikasi Supabase. Laporan tersimpan dengan kontrol akses berdasarkan peran pengguna."}</p>{demo ? <div className="setup-steps"><strong>Langkah mengaktifkan Supabase</strong><ol><li>Buat project di Supabase, lalu jalankan SQL dari <code>supabase/schema.sql</code>.</li><li>Tambahkan <code>NEXT_PUBLIC_SUPABASE_URL</code> dan <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> ke environment project.</li><li>Deploy ulang; penghuni dapat membuat akun, sementara akun helpdesk dan teknisi dibuat oleh admin.</li></ol><p>Nama admin demo: <code>Nanda Putri</code> · Teknisi demo: <code>Bima Saputra</code></p></div> : <div className="settings-row"><span>Database & autentikasi</span><span><span className="live-dot" /> Aktif</span></div>}</section><section className="panel settings-card"><div className="settings-title"><span className="settings-icon settings-person"><Users size={19} /></span><div><h2>Akun Anda</h2><p>Informasi profil pengguna</p></div></div><div className="account-profile"><span className={`avatar avatar-large ${initialsColor(name)}`}>{initials(name)}</span><div><strong>{name}</strong><small>{email || (demo ? "Pengguna demo" : "")}</small></div></div><div className="settings-row"><span>Peran</span><strong>{demo ? "Mode pratinjau" : "Terverifikasi melalui admin"}</strong></div>{!demo && <button className="button button-light signout-button" onClick={onSignOut}><LogOut size={16} /> Keluar dari akun</button>}</section></div><div className="settings-note"><ShieldCheck size={16} /><span>FixDorm tidak menggunakan logo resmi Telkom University. Data proyek Supabase tetap berada di bawah kendali pengelola asrama.</span></div></>;
 }
 
-function AuthModal({ authMode, setAuthMode, email, setEmail, password, setPassword, fullName, setFullName, busy, onClose, onSubmit }: { authMode: "signin" | "signup"; setAuthMode: (mode: "signin" | "signup") => void; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; fullName: string; setFullName: (value: string) => void; busy: boolean; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <Modal title={authMode === "signin" ? "Selamat datang kembali" : "Buat akun penghuni"} subtitle={authMode === "signin" ? "Masuk untuk mengelola laporan fasilitas." : "Daftar menggunakan email asrama Anda."} onClose={onClose}><form className="form-body auth-form" onSubmit={onSubmit}>{authMode === "signup" && <label className="field"><span>Nama lengkap <b>*</b></span><input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Nama Anda" required maxLength={100} /></label>}<label className="field"><span>Email <b>*</b></span><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nama@asrama.ac.id" required /></label><label className="field"><span>Kata sandi <b>*</b></span><input type="password" autoComplete={authMode === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minimal 8 karakter" minLength={8} required /></label><button className="button button-primary auth-submit" disabled={busy}>{busy ? <span className="spinner" /> : <LogIn size={17} />}{authMode === "signin" ? "Masuk" : "Buat akun penghuni"}<ArrowRight size={16} /></button><p className="auth-switch">{authMode === "signin" ? "Belum punya akun penghuni?" : "Sudah terdaftar?"} <button type="button" onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}>{authMode === "signin" ? "Daftar" : "Masuk"}</button></p><div className="auth-security"><ShieldCheck size={15} /> Pengelola membuat akun admin dan teknisi.</div></form></Modal>;
+function AuthModal({ role, authMode, setAuthMode, email, setEmail, password, setPassword, fullName, setFullName, busy, onClose, onSubmit }: { role: Role; authMode: "signin" | "signup"; setAuthMode: (mode: "signin" | "signup") => void; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; fullName: string; setFullName: (value: string) => void; busy: boolean; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const signup = authMode === "signup" && role === "resident";
+  const subtitle = role === "resident" ? "Buat dan pantau laporan fasilitas asrama Anda." : role === "admin" ? "Kelola laporan mahasiswa dan koordinasikan teknisi." : "Lihat tugas yang diberikan dan kirim kabar perbaikan.";
+  return <Modal title={signup ? "Buat akun mahasiswa" : `Masuk sebagai ${roleName(role)}`} subtitle={signup ? "Daftar menggunakan email asrama Anda." : subtitle} onClose={onClose}>
+    <form className="form-body auth-form" onSubmit={onSubmit}>
+      {signup && <label className="field"><span>Nama lengkap <b>*</b></span><input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Nama Anda" required maxLength={100} /></label>}
+      <label className="field"><span>Email <b>*</b></span><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nama@asrama.ac.id" required /></label>
+      <label className="field"><span>Kata sandi <b>*</b></span><input type="password" autoComplete={signup ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minimal 8 karakter" minLength={8} required /></label>
+      <button className="button button-primary auth-submit" disabled={busy}>{busy ? <span className="spinner" /> : <LogIn size={17} />}{signup ? "Buat akun mahasiswa" : "Masuk"}<ArrowRight size={16} /></button>
+      {role === "resident" && <p className="auth-switch">{signup ? "Sudah punya akun?" : "Belum punya akun mahasiswa?"} <button type="button" onClick={() => setAuthMode(signup ? "signin" : "signup")}>{signup ? "Masuk" : "Daftar"}</button></p>}
+      <div className="auth-security"><ShieldCheck size={15} />{role === "resident" ? "Mahasiswa mendaftar mandiri dengan email asrama." : "Akun staf diterbitkan oleh pengelola asrama."}</div>
+    </form>
+  </Modal>;
 }
 
